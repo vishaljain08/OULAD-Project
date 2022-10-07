@@ -1,0 +1,140 @@
+title: "Prediction of student score"
+author: "Vishal Jain"
+date: "04.12.2021"
+
+## Introduction
+Presented here is the explanation of the chosen predicted model to predict the students' score in assessments along with the R code to achieve that.
+
+## Machine Learning Model Chosen: Support Vector Machines with Linear Kernel
+
+
+Loading the required libraries
+
+```{r}
+setwd("C:/Users/visha/OneDrive - Coventry University/UPV/ADE/Project/anonymisedData")
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(doSNOW)
+library(xgboost)
+library(ggplot2)
+```
+
+
+Importing the studentInfo and studentAssessment csv files from the OULAD dataset
+
+```{r}
+#Reading the csv files 
+student.info <- read.csv("studentInfo.csv")
+student.assessment <- read.csv("studentAssessment.csv")
+```
+
+The first order of business is merging the relevant variables from both files into a single dataframe.
+
+```{r}
+#Merging the studentInfo.csv and relevant variables from studentAssessment.csv to get more info about the students in the same dataframe
+mergedInfo <- merge(x=student.assessment, y=student.info[,c("id_student","gender", "age_band", "studied_credits")], by="id_student")
+```
+
+The na.omit() functio can be used to get rid of any rows with missing data
+
+```{r}
+#Omitting any rows with NA values 
+mergedInfo <- na.omit(mergedInfo)
+
+
+#Converting any character variables in the merged dataframe to factors
+mergedInfo <- 
+  mergedInfo %>%
+  mutate_if(is.character, as.factor)
+```
+
+It needs to be checked if there are any variables with little or no variability as this can affect the model
+
+```{r}
+nearZeroVar(mergedInfo, saveMetrics = TRUE)
+```
+
+We can see that the nzv field is TRUE for the 'is_banked' varibale, so we need to get rid of it
+
+```{r}
+#Resaving the dataframe as the same name but without the is-banked variable using select() function
+mergedInfo <-
+  mergedInfo %>%
+  select(-is_banked)
+```
+
+```{r}
+# Setting a seed to ensure the reproducibility
+set.seed(2020)
+```
+
+Creating a trainIndex object that indexes 70% of the data, to follow the widely used 70-30 pattern for training and testing respectively:
+
+```{r}
+trainIndex <- createDataPartition(mergedInfo$score,
+                                  p = .7,
+                                  list = FALSE,
+                                  times = 1)
+
+score.train <- mergedInfo[trainIndex,]
+score.test <- mergedInfo[-trainIndex,]
+```
+
+trainControl function can be used to control the training function later on. Here a 10-fold Cross Validation process is used which is repeated 3 times to increase the accuracy of the model:
+```{r}
+train.control <- trainControl(number = 10,
+                              repeats = 1,
+                              method = "repeatedcv",
+                              verboseIter = TRUE)
+```
+
+To make the training process faster, the doSNOW package has been used to train the model parallelly. Here, a cluster with 8 processes has been created, but this number depends on the number of cores/threads on the computer the code is being run on:
+
+```{r}
+cl <- makeCluster(8, type = "SOCK")
+registerDoSNOW(cl)
+```
+
+Training the model using the previously set up control parameters and using the svmLinear model which has been selected by trial and error compared to a number of models including xgbTree, ranger etc.
+
+```{r}
+forestFit <- train(score ~ .,
+                 data = score.train,
+                 method = "svmLinear",
+                 trControl = train.control,
+                 verbose = TRUE)
+
+#Clearing the cluster created to free up the memory
+stopCluster(cl)
+
+#Examining the model
+forestFit
+```
+
+Not the model can be used to predict the scores of the students in the testing module to check the accuracy of the created module:
+
+```{r}
+preds <- predict(forestFit, score.test)
+
+#Creating a new object for the testing data with predicted values included
+score.test.augmented <-
+  score.test %>%
+  mutate(pred = predict(forestFit, score.test),
+         obs = score)
+
+#Transforming this new object into a data frame
+defaultSummary(as.data.frame(score.test.augmented))
+```
+
+A scatterplot can be drawn using the predictions against the actual scores in the the testing module.
+
+```{r}
+ggplot(score.test.augmented, aes(x=pred,y=score)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x)
+```
+   
+   
+## Conclusion
+As of right now, this is the best model that has been found with the Rsquared and RMSE values on the testing data being 0.01767867 and 19.10235243 respectively

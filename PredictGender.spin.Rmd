@@ -1,0 +1,78 @@
+
+```{r }
+setwd("C:/Users/visha/OneDrive - Coventry University/UPV/ADE/Project/anonymisedData")
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(doSNOW)
+library(xgboost)
+library(ggplot2)
+
+student.info <- read.csv("studentInfo.csv")
+student.assessment <- read.csv("studentAssessment.csv")
+
+# Merging the studentInfo.csv and studentAssessment.csv to get more info about
+#the students in the same dataframe
+mergedInfo <- merge(x=student.assessment, y=student.info[,c("id_student","gender", "age_band", "studied_credits")], by="id_student")
+
+#Omitting any rows with NA values 
+mergedInfo <- na.omit(mergedInfo)
+
+
+#Converting any character variables to factors
+mergedInfo <- 
+  mergedInfo %>%
+  mutate_if(is.character, as.factor)
+
+# Setting a seed to ensure the reproducibility of our data partition.
+set.seed(2020)
+
+#Creating a trainIndex object that stores 70% of the data, to follow the widely
+#used 70-30 pattern for training and testing. 
+
+trainIndex <- createDataPartition(mergedInfo$gender,
+                                  p = .7,
+                                  list = FALSE,
+                                  times = 1)
+
+score.train <- mergedInfo[trainIndex,]
+score.test <- mergedInfo[-trainIndex,]
+
+train.control <- trainControl(number = 10,
+                              repeats = 1,
+                              method = "repeatedcv",
+                              verboseIter = TRUE)
+
+cl <- makeCluster(3, type = "SOCK")
+registerDoSNOW(cl)
+
+forestFit <- train(gender ~ .,
+                   data = score.train,
+                   method = "ranger",
+                   trControl = train.control,
+                   verbose = TRUE)
+
+stopCluster(cl)
+forestFit
+
+preds <- predict(forestFit, score.test)
+
+score.test.augmented <-
+  score.test %>%
+  mutate(pred = predict(forestFit, score.test),
+         obs = gender)
+
+defaultSummary(as.data.frame(score.test.augmented))
+
+
+confusionMatrix(preds, score.test.augmented$gender)
+```
+
+
+
+---
+title: PredictGender.R
+author: visha
+date: '2021-12-13'
+
+---

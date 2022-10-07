@@ -1,0 +1,110 @@
+# Trying to predict if a student will dropout or not.
+## By Vishal Jain
+
+
+Importing the required libraries
+
+```{r}
+setwd("C:/Users/visha/OneDrive - Coventry University/UPV/ADE/Project/anonymisedData")
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(doSNOW)
+library(xgboost)
+library(ggplot2)
+```
+
+
+Importing the studentInfo csv file and adding an additional column "Dropout" which has a value Y if the student's final_result is "Withdrawn" and N if anything else.
+
+```{r}
+student.info <- read.csv("studentInfo.csv")
+
+student.info$Dropout <- ifelse((student.info$final_result == "Withdrawn"),
+                           "Y", "N")
+```
+
+
+Converting any character variables to factors
+```{r}
+student.info <- 
+  student.info %>%
+  mutate_if(is.character, as.factor)
+```
+
+We can remove the final-result variable because it has been used to create the Dropout variable and the two are very similar which can cause the model to be inaccurate
+
+```{r}
+student.info <-
+  student.info %>%
+  select(-final_result)
+```
+
+Using the na.omit() function to omit any rows with missing data
+```{r}
+student.info <- na.omit(student.info)
+```
+
+Setting a seed to ensure the reproducibility of our data partition.
+
+```{r}
+set.seed(2020)
+```
+
+
+Creating a trainIndex object that stores 70% of the data, to follow the widely used 70-30 pattern for training and testing respectively. 
+
+```{r}
+trainIndex <- createDataPartition(student.info$Dropout,
+                                  p = .7,
+                                  list = FALSE,
+                                  times = 1)
+
+dropout.train <- student.info[trainIndex,]
+dropout.test <- student.info[-trainIndex,]
+```
+
+
+Using trainControl function to control the training function later on. Here we are using 10-fold Cross Validation process repeated 3 times to increase the accuracy of the model.
+
+```{r}
+train.control <- trainControl(number = 10,
+                              repeats = 3,
+                              method = "repeatedcv",
+                              verboseIter = TRUE)
+```
+
+
+Using the doSNOW package to enable parallel training by caret. This helps to decrease the time taken for training.
+Here we have created a socket cluster using 5 processes.
+```{r}
+cluster <- makeCluster(5, type = "SOCK")
+registerDoSNOW(cluster)
+```
+
+Training the model using the previously set up control parameters and clearing the clusters once done
+```{r}
+forestFit <- train(Dropout ~ .,
+                   data = dropout.train,
+                   method = "xgbTree",
+                   trControl = train.control)
+stopCluster(cluster)
+```
+
+
+Examine the results, we can see that
+```{r}
+forestFit
+```
+
+preds <- predict(forestFit, dropout.test)
+
+dropout.test.augmented <-
+  dropout.test %>%
+  mutate(pred = predict(forestFit, dropout.test),
+         obs = Dropout)
+
+defaultSummary(as.data.frame(dropout.test.augmented))
+
+
+confusionMatrix(preds, dropout.test.augmented$Dropout)
